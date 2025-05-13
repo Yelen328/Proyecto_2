@@ -31,6 +31,7 @@ void INIT_TMR1();
 void INIT_ADC();
 void INIT_TIMER2();
 void updateDutyCycle2A(uint8_t duty);
+void updateDutyCycle2b(uint8_t duty);
 void initUART();
 void INIT_PIN_CHANGE();
 
@@ -65,8 +66,8 @@ void setup(){
 	PORTC &= ~(1 << PORTC3);
 	PORTC |= (1 << PORTC3);		//Pull up activado
 	
-	//CLKPR = (1 << CLKPCE); //Habilita cambios de prescaler
-	//CLKPR = (1 << CLKPS2);	// 1MHz
+	CLKPR = (1 << CLKPCE); //Habilita cambios de prescaler
+	CLKPR = (1 << CLKPS2);	// 1MHz
 	sei();		//Habilita cambios de interrupción
 	
 	ADCSRA |= (1 << ADSC); // Iniciar primera conversión
@@ -77,24 +78,28 @@ void INIT_TIMER2(){
 	
 
 	DDRB |= (1 << DDB3);	//Setear bit 3 del puerto B como salida
-	//DDRD |= (1 << DDD3);	//Setear bit 3 del puerto D como salida
+	DDRD |= (1 << DDD3);	//Setear bit 3 del puerto D como salida
 		
 	//CONFIGURACIÓN DEL TIMER 2 PARA FAST PWM CON OCR1A COMO TOP
 	TCCR2A = 0;
 	TCCR2A |= (1 << COM2A1);	//no invertido para la salida 2A
-	//TCCR2A |= (1 << COM2B1);	//no invertido para la salida 2B
+	TCCR2A |= (1 << COM2B1);	//no invertido para la salida 2B
 		
 		
 	//Modo fast PMW (MODO 3)
 	TCCR2A |= (1 << WGM21)|(1 << WGM20);
 	TCCR2B = 0;
 	TCCR2B |= (1<<CS22)|(1<<CS20);	//Prescaler de 128
-	OCR2A =200;  // ~78% duty
+	
 		
 }
 
 void  updateDutyCycle2A(uint8_t duty){
 	OCR2A = duty;
+}
+
+void  updateDutyCycle2b(uint8_t duty){
+	OCR2B = duty;
 }
 
 void INIT_PIN_CHANGE()
@@ -142,36 +147,45 @@ ISR(ADC_vect)
 	
 	switch (POT){
 		case 1:
-		ADMUX &= ~((1<<MUX2)|(1<<MUX1)|(1<<MUX0));  // Limpiar bit
-		ADMUX |= (1<<MUX2) | (1<<MUX1);//Selección de canal Bit 6 del puerto C
-		ADC1=ADCH;
-		dutyCycle1 = (ADC1 * (180.0 / 255.0)) + 70.0;
-		updateDutyCycle1(dutyCycle1); // Actualizar PWM
-		break;
+			ADMUX &= ~((1<<MUX2)|(1<<MUX1)|(1<<MUX0));  // Limpiar bit
+			ADMUX |= (1<<MUX2) | (1<<MUX1);//Selección de canal Bit 6 del puerto C
+			ADC1=ADCH;
+			dutyCycle1 = (ADC1 * (188.0 / 255.0)) + 69.0;
+			updateDutyCycle1(dutyCycle1); // Actualizar PWM
+			break;
 		
 		case 2:
-		ADMUX &= ~((1<<MUX2)|(1<<MUX1)|(1<<MUX0));  // Limpiar bit
-		ADMUX |= (1<<MUX2)|(1<<MUX1)|(1<<MUX0); //Selección de canal Bit 7 del puerto C
-		ADC2=ADCH;
-		dutyCycle2 = 1010.00 + ADC2 * (4000.00/255.00);
-		updateDutyCycle1B(dutyCycle2); // Actualizar PWM
-		break;
+			ADMUX &= ~((1<<MUX2)|(1<<MUX1)|(1<<MUX0));  // Limpiar bit
+			ADMUX |= (1<<MUX2)|(1<<MUX1)|(1<<MUX0); //Selección de canal Bit 7 del puerto C
+			ADC2=ADCH;
+			dutyCycle2 = (ADC2 *  (188.0 / 255.0)) + 69.0;
+			updateDutyCycle1B(dutyCycle2); // Actualizar PWM
+			break;
 		
 		case 3:
 		
-		ADMUX &= ~((1<<MUX2)|(1<<MUX1)|(1<<MUX0));  // Limpiar bit MUX0 primero
-		ADMUX |= (1<<MUX2) | (1<<MUX0);//Selección de canal Bit 5 del puerto C
-		ADC3=ADCH;
-		dutyCycle3=200;
-		updateDutyCycle2A(dutyCycle3); // Actualizar PWM
-		break;
+			ADMUX &= ~((1<<MUX2)|(1<<MUX1)|(1<<MUX0));  // Limpiar bit MUX0 primero
+			ADMUX |= (1<<MUX2) | (1<<MUX0);//Selección de canal Bit 5 del puerto C
+			ADC3=ADCH;
+			dutyCycle3 = (ADC3 * (24.0 / 255.0)) + 2.0;
+			updateDutyCycle2A(dutyCycle3); // Actualizar PWM
+			break;
 		
 		case 4:
-		POT=0;
-		break;
+		
+			ADMUX &= ~((1<<MUX2)|(1<<MUX1)|(1<<MUX0));  // Limpiar bit MUX0 primero
+			ADMUX |= (1<<MUX2);//Selección de canal Bit 4 del puerto C
+			ADC4=ADCH;
+			dutyCycle4 = (ADC4 * (24.0 / 255.0)) + 2.0;
+			updateDutyCycle2b(dutyCycle4); // Actualizar PWM
+			break;
+		
+		case 5:
+			POT=0;
+			break;
 		
 		default:
-		break;
+			break;
 	}
 	
 	ADCSRA |= (1 << ADSC);	//Iniciar nueva conversión
