@@ -3,6 +3,11 @@
  *
  * Created: 1/5/2025 10:25:48
  * Author : yelena Cotzojay
+ * Descripción: El proyecto consta de la utilización de 4 servomotores
+ haciendo uso de diferentes modos:
+	Modo 1: Modo manual
+	Modo 2: Modo EEPROM
+	Modo 3: Modo Adafruit
  */
 
 #define	F_CPU	16000000
@@ -20,12 +25,17 @@ uint8_t ADC1=0;
 uint8_t ADC2=0;
 uint8_t ADC3=0;
 uint8_t ADC4=0;
-uint8_t MODO=0;
-uint8_t contador=0;
+uint8_t MODO=0;	//Selecciona en qué modo se encuentra por medio de banderas
+uint8_t contador=0;	//Contador para ver el modo en el que se encuentra
+uint8_t contador1=0;	//contador para ver qué posición se quiere leer
+uint8_t indicador_acb=0;	//Bandera para el indicador de acción por medio de
+uint8_t indicador_no_posicion=0;	//seleccione qué posicioón se va a guardar 
+uint8_t lectura_servo_M1=0;
+uint8_t lectura_servo_M2=0;
+uint8_t lectura_servo_M3=0;
+uint8_t lectura_servo_M4=0;
 
-
-
-//Función Prototypes
+//Funcion Prototypes
 void setup();
 void INIT_TMR1();
 void INIT_ADC();
@@ -34,14 +44,53 @@ void updateDutyCycle2A(uint8_t duty);
 void updateDutyCycle2b(uint8_t duty);
 void initUART();
 void INIT_PIN_CHANGE();
+void writeEEPROM(uint8_t dato, uint16_t direccion);
+uint8_t readEEPROM(uint16_t direccion);
+void writeChar(char caracter);
+void writeString(char* texto);
+void savepositions_servo();
+void readpositions_servo();
+void cargarposicion(uint8_t index);
+
 
 
 int main(void)
 {
 	setup();
+	//writeEEPROM('B', 0x00);
+	uint8_t dire = 0x00;
+	uint8_t temporal = readEEPROM(dire);
+	while (temporal != 0xFF){
+		writeChar(temporal);
+		//writeEEPROM(0xFF,dire+0x00);
+		dire++;
+		temporal = readEEPROM(dire);
+	}
 	
 	while (1)
 	{	
+		//Modo 1: Modo manual y guardar posiciones
+		if(MODO==0b00000001){
+			PORTD &= ~(1 << PORTD7);
+			PORTB &= ~((1 << PORTB0)|(1 << PORTB4));
+			PORTD |= (1 << PORTD6);
+			savepositions_servo();
+		}
+		
+		//Si se está en modo dos verificar al función de guardar posiciones
+		if(MODO==0b00000010){
+			PORTD &= ~(1 << PORTD6);
+			PORTB &= ~((1 << PORTB0)|(1 << PORTB4));
+			PORTD |= (1 << PORTD7);
+			readpositions_servo();
+		}
+		
+		//Si la está en modo 3: Verifica la función de leer posiciones para cada motor
+		if (MODO==0b00000100){
+			PORTD &= ~((1 << PORTD6)|(1 << PORTD7));
+			PORTB &= ~(1 << PORTB4);
+			PORTB |= (1 << PORTB0);
+		}
 		
 	}
 }
@@ -55,16 +104,19 @@ void setup(){
 	
 	INIT_PIN_CHANGE();
 	initUART();
+	//contador==1;
 	
 
 	//Configurar los puertos de salida (LEDS)
-	DDRB |= (1 << PORTB0);
-	PORTB &= ~(1<< PORTB4);
+	DDRB |= (1 << PORTB0)|(1 << PORTB4);
+	PORTB &= ~((1<< PORTB0)|(1<< PORTB4));
 	DDRD |= (1 << PORTD7)|(1 << PORTD6);
 	PORTD &= ~((1 << PORTD7)|(PORTD6));
 	//Configurar el bit 3 del puerto C como entrada
-	PORTC &= ~(1 << PORTC3);
-	PORTC |= (1 << PORTC3);		//Pull up activado
+	DDRC &= ~((1 << PORTC3)|(1 << PORTC2)|(1 << PORTC1)|(1 << PORTC0));
+	PORTC |= ((1 << PORTC3)|(1 << PORTC2)|(1 << PORTC1)|(1 << PORTC0));
+	//DDRB &= ~(1 << PORTB4);
+	//PORTB |= (1 << PORTB4);//Pull up activado
 	
 	CLKPR = (1 << CLKPCE); //Habilita cambios de prescaler
 	CLKPR = (1 << CLKPS2);	// 1MHz
@@ -104,8 +156,12 @@ void  updateDutyCycle2b(uint8_t duty){
 
 void INIT_PIN_CHANGE()
 {//Habilitar interrupciones de pin change
-	PCICR |= (1 << PCIE1);     // Habilitar interrupción de cambio de estado
-	PCMSK1 |= (1 << PCINT11);  // Habilita interrupción para PORTC3 (bit 3 de Puerto C)
+	PCICR |= (1 << PCIE1)|(1 << PCIE0);     // Habilitar interrupción de cambio de estado
+	// Habilita interrupción para bit 3, 2, 1, 0 deL Puerto C
+	PCMSK1 |= (1 << PCINT11)|(1 << PCINT10)|(1 << PCINT9)|(1 << PCINT8); 
+	
+	//Habilitar interrupción para  bit 4 del puerto B
+	PCMSK0 |= (1 << PCINT4);
 }
 
 void initUART(){
@@ -115,14 +171,15 @@ void initUART(){
 	
 	//Configurar UCSR0A
 	UCSR0A=0;
+	UCSR0A= (1 << U2X0);	//Double the USART transmission Speed
 	//Configuración UCSR0B: Habililitndo la interrupción al escribir:
 	//-Habilibitar recepción
 	//-Habilitación de transmisión
 	UCSR0B |= (1<<RXCIE0)|(1<<RXEN0)| (1<< TXEN0);
 	//Configurar UCSR0C
 	UCSR0C |= (1<<UCSZ01) | (1<<UCSZ00);
-	//Configurar UBRR0: UBRR0 = 103 -> 9600  @ 16MHz
-	UBRR0 = 103;
+	//Configurar UBRR0: UBRR0 = 12 -> 9600  @ 1MHz
+	UBRR0 = 12;
 }
 
 
@@ -139,80 +196,193 @@ void INIT_ADC(){
 	ADCSRA |= (1 << ADEN);	//Habilitar ADS
 }
 
+void writeEEPROM(uint8_t dato, uint16_t direccion){
+	//Esperar a que termine la escritura anterior
+	while (EECR & (1 << EEPE));
+	//Asignar dirección de escritura
+	EEAR = direccion;
+	//asignar dato a "escribir"
+	EEDR = dato;
+	//Setear en 1 el "master write enable"
+	EECR |= (1 << EEMPE);
+	//Empezar a escribir
+	EECR |= (1 << EEPE);
+}
+
+uint8_t readEEPROM(uint16_t direccion){
+	//Esperar a que termine la escritura anterior
+	while (EECR & (1 << EEPE));
+	//Asignar dirección de escritura
+	EEAR = direccion;
+	//Empezara a leer
+	EECR |= (1 << EERE);
+	return EEDR;
+}
+
+void writeChar(char caracter){
+	while ( (UCSR0A & (1<<UDRE0))==0){
+		
+	}
+
+	UDR0=caracter;
+	
+}
+
+void writeString(char* texto)
+{
+	for(uint8_t i = 0; *(texto+i) !='\0'; i++)
+	{
+		writeChar(*(texto+i));
+	}
+	
+}
+
+void savepositions_servo(){
+	//Verificar si se presionó el botón para guardar posición
+	if (indicador_acb==0b00000001){
+		
+		writeEEPROM(ADC1, 0x00 + indicador_no_posicion*4);
+		writeEEPROM(ADC2, 0x01 + indicador_no_posicion*4);
+		writeEEPROM(dutyCycle3, 0x02 + indicador_no_posicion*4);
+		writeEEPROM(dutyCycle4, 0x03 + indicador_no_posicion*4);
+		
+		writeChar('.');
+		writeChar(dutyCycle1);
+		writeChar('.');
+		writeChar(dutyCycle2);
+		writeChar('.');
+		writeChar(dutyCycle3);
+		writeChar('.');
+		writeChar(dutyCycle4);
+			
+		writeString("Guardada posición ");
+		writeChar('1' + indicador_no_posicion); // Mostrar posición 1, 2, 3, 4
+		writeString("\r\n");
+		
+		indicador_no_posicion++;
+		if (indicador_no_posicion >=4){
+			indicador_no_posicion=0;
+		}
+	 indicador_acb=0;	//Apagar la bandera 
+	}
+	
+}
+
+void readpositions_servo(){
+	if(indicador_acb==0b00000001){
+		cargarposicion(0);
+		}
+		
+	if(indicador_acb==0b00000010){
+		cargarposicion(1);
+	}
+	
+	if(indicador_acb==0b00000100){
+		cargarposicion(2);
+	}
+	
+	if(indicador_acb==0b00001000){
+		cargarposicion(3);
+	}
+	indicador_acb=0; //Apagar bandera
+}
+
+void cargarposicion(uint8_t index){
+	
+	uint8_t adc1 = readEEPROM(0x00 + index*4);
+	uint8_t adc2 = readEEPROM(0x01 + index*4);
+	dutyCycle3 = readEEPROM(0x02 + index*4);
+	dutyCycle4 = readEEPROM(0x03 + index*4);
+	
+	dutyCycle1 = (adc1 * (188.0 / 255.0)) + 69.0;
+	dutyCycle2 = (adc2 * (188.0 / 255.0)) + 69.0;
+	
+	// Actualizar todos los PWM
+	updateDutyCycle1(dutyCycle1);
+	updateDutyCycle1B(dutyCycle2);
+	updateDutyCycle2A(dutyCycle3);
+	updateDutyCycle2b(dutyCycle4);
+	 
+	writeString("posición leída ");
+	writeChar('1' + index); // Mostrar posición 1, 2, 3, 4
+	writeString("\r\n");
+}
 /*************VECTOR DE INTERRUPCIÓN************/
 
 ISR(ADC_vect)
 {
-	POT++;
-	
-	switch (POT){
-		case 1:
+	if (MODO == 0b00000001){
+		POT++;
+		
+		switch (POT){
+			case 1:
 			ADMUX &= ~((1<<MUX2)|(1<<MUX1)|(1<<MUX0));  // Limpiar bit
 			ADMUX |= (1<<MUX2) | (1<<MUX1);//Selección de canal Bit 6 del puerto C
 			ADC1=ADCH;
-			dutyCycle1 = (ADC1 * (188.0 / 255.0)) + 69.0;
+			dutyCycle1 = (ADC1 * (186.0 / 255.0)) + 68.0;
 			updateDutyCycle1(dutyCycle1); // Actualizar PWM
 			break;
-		
-		case 2:
+			
+			case 2:
 			ADMUX &= ~((1<<MUX2)|(1<<MUX1)|(1<<MUX0));  // Limpiar bit
 			ADMUX |= (1<<MUX2)|(1<<MUX1)|(1<<MUX0); //Selección de canal Bit 7 del puerto C
 			ADC2=ADCH;
-			dutyCycle2 = (ADC2 *  (188.0 / 255.0)) + 69.0;
+			dutyCycle2 = (ADC2 *  (186.0 / 255.0)) + 68.0;
 			updateDutyCycle1B(dutyCycle2); // Actualizar PWM
 			break;
-		
-		case 3:
-		
+			
+			case 3:
+			
 			ADMUX &= ~((1<<MUX2)|(1<<MUX1)|(1<<MUX0));  // Limpiar bit MUX0 primero
 			ADMUX |= (1<<MUX2) | (1<<MUX0);//Selección de canal Bit 5 del puerto C
 			ADC3=ADCH;
 			dutyCycle3 = (ADC3 * (24.0 / 255.0)) + 2.0;
 			updateDutyCycle2A(dutyCycle3); // Actualizar PWM
 			break;
-		
-		case 4:
-		
+			
+			case 4:
+			
 			ADMUX &= ~((1<<MUX2)|(1<<MUX1)|(1<<MUX0));  // Limpiar bit MUX0 primero
 			ADMUX |= (1<<MUX2);//Selección de canal Bit 4 del puerto C
 			ADC4=ADCH;
 			dutyCycle4 = (ADC4 * (24.0 / 255.0)) + 2.0;
 			updateDutyCycle2b(dutyCycle4); // Actualizar PWM
 			break;
-		
-		case 5:
+			
+			case 5:
 			POT=0;
 			break;
-		
-		default:
+			
+			default:
 			break;
+		}
 	}
-	
 	ADCSRA |= (1 << ADSC);	//Iniciar nueva conversión
 }
 	
 
 
-/*ISR(PCINT1_vect) {
+ISR(PCINT1_vect) {
 	//Leer estado actua de los botones
-	uint8_t	estado_actual=PINC;
+	uint8_t	estado_actual_C=PINC;
+
 	
 	
-	//Detectar flanco
-	if (!(estado_actual & (1<<PINC3))){
+	//Detectar flanco para el botón de modo
+	if (!(estado_actual_C & (1<<PINC3))){
 		contador++;
 	}
 	switch (contador){
 		case 1:
-			MODO=0b00000001;	//Activar la bandra del modo 1
+			MODO=0b00000001;	//Activar la bandra del modo 1: Manual
 			break;
 			
 		case 2:
-			MODO=0b00000010;	//Activar al bandera del modo 2
+			MODO=0b00000010;	// Modo 2: Guardar posiciones en la EEPROM
 			break;
 			
 		case 3:
-			MODO=0b00000100;	//Activar la bandera del modo 3
+			MODO=0b00000100;	//Modo 3: leer datos de la EEPROM
 			break;
 			
 		case 4:
@@ -224,44 +394,54 @@ ISR(ADC_vect)
 		
 	}
 	
+	//Botón 2 (guardar posiciones) para el modo 1
+	//Leer primera posición para el modo 2
+	if (!(estado_actual_C & (1<<PINC2))){
+		indicador_acb=0b00000001;
+	}
+
+	
+	//Leer segunda posición para el modo 2
+	if (!(estado_actual_C & (1<<PINC1))){
+		indicador_acb=0b00000010;
+	}
+	
+	
+	//Leer tercera posición para el modo 2
+	if (!(estado_actual_C & (1<<PINC0))){
+		indicador_acb=0b00000100;
+	}
+	
+	
+}
+
+/*ISR(PCINT0_vect) {
+	//Leer cuarta posición para el modo 2/
+	if (!(PINB & (1 << PINB4))){
+		indicador_acb=0b00001000;
+	}
 }*/
 
-/*ISR(USART_RX_vect){
-	
-	if (MODO==0b00000010){
-		//APAGAR LOS LEDS QUE NO SE ESTÁN UTILIZANDO
-		PORTD &= ~(PORTD6);
-		PORTB &= ~(1 << PORTB0);
-		//Enceder el led indicador
-		PORTD |= (1 << PORTD7);
-	}*/
-	
-/*
-	caracter=UDR0;
-	
-	if (waiting_for_led_char){
-		PORTB= caracter;
-		writeString("\n\rLEDs actualizados con: ");
-		WriteChar(caracter);
-		writeString("\n\r");
-		waiting_for_led_char = 0;  // Desactivar bandera
+ISR(USART_RX_vect){
+	char caracter=UDR0;
+	switch(caracter){
+		case '0':
+			MODO=0b00000001;
+			break;
+			
+		case '1':
+			MODO=0b00000010;
+			break;
+			
+		case '2':
+			MODO=0b00000100;
+			break;
+			
+		default:
+			break;
 	}
 	
-	else{
-		WriteChar(caracter);
-		writeString("\n\r");  // Añadir un salto de línea
+	writeChar(caracter);
 	}
 	
-	if (caracter & (1 << 6))
-	{
-		PORTD |= (1 << PORTD6);
-		}else{
-		PORTD &= ~(1 << PORTD6);
-	}
-	if (caracter & (1 << 7))
-	{
-		PORTD |= (1 << PORTD7);
-		}else{
-		PORTD &= ~(1 << PORTD7);
-	}*/
-
+	
